@@ -15,6 +15,8 @@ import json
 import re
 import calibrate_video
 
+import bundled_images
+
 
 import stabilizer
 
@@ -31,13 +33,12 @@ class Launcher(QtWidgets.QWidget):
         super().__init__()
 
         self.setWindowTitle("Gyroflow {} Launcher".format(__version__))
-
-        
+        self.setWindowIcon(QtGui.QIcon(':/media/icon.png'))
 
         self.setFixedWidth(450)
         
         # image
-        pixmap = QtGui.QPixmap('media/logo_rev0_w400.png')
+        pixmap = QtGui.QPixmap(':/media/logo_rev0_w400.png')
         self.top_logo = QtWidgets.QLabel()
         self.top_logo.setPixmap(pixmap.scaled(400,450,QtCore.Qt.KeepAspectRatio))
         self.top_logo.setAlignment(QtCore.Qt.AlignCenter)
@@ -68,7 +69,7 @@ class Launcher(QtWidgets.QWidget):
         self.version_button.setMinimumSize(300,50)
         self.version_button.setStyleSheet("font-size: 14px;")
 
-        self.footer = QtWidgets.QLabel('''Developed by Elvin. <a href='https://github.com/ElvinC/gyroflow'>Contribute or support on Github</a>''')
+        self.footer = QtWidgets.QLabel('''Developed by Elvin | <a href='http://gyroflow.xyz/'>gyroflow.xyz</a> | <a href='https://github.com/ElvinC/gyroflow'>Git repo</a> | <a href='http://gyroflow.xyz/donate'>Donate</p>''')
         self.footer.setOpenExternalLinks(True)
         self.footer.setAlignment(QtCore.Qt.AlignCenter)
 
@@ -274,11 +275,12 @@ class VideoPlayer(QtWidgets.QLabel):
         size = self.size()
         painter = QtGui.QPainter(self)
         point = QtCore.QPoint(0,0)
-        scaledPix = self.pixmap.scaled(size, QtCore.Qt.KeepAspectRatio, transformMode = QtCore.Qt.SmoothTransformation)
-        point.setX((size.width() - scaledPix.width())/2)
-        point.setY((size.height() - scaledPix.height())/2)
-        # print point.x(), ' ', point.y()
-        painter.drawPixmap(point, scaledPix)
+        if not self.pixmap.isNull():
+            scaledPix = self.pixmap.scaled(size, QtCore.Qt.KeepAspectRatio, transformMode = QtCore.Qt.SmoothTransformation)
+            point.setX((size.width() - scaledPix.width())/2)
+            point.setY((size.height() - scaledPix.height())/2)
+            # print point.x(), ' ', point.y()
+            painter.drawPixmap(point, scaledPix)
 
 
 class VideoPlayerWidget(QtWidgets.QWidget):
@@ -339,6 +341,10 @@ class VideoPlayerWidget(QtWidgets.QWidget):
         pixmap = QtGui.QPixmap.fromImage(image)
         self.player.pixmap = pixmap
         self.player.setPixmap(pixmap)
+
+    def set_cv_frame(self, frame):
+        self.thread.frame = frame
+        self.thread.update_once = True
 
     def stop(self):
         self.thread.playing = False
@@ -447,6 +453,7 @@ class Form(QtWidgets.QDialog):
     def __init__(self, parent=None, title="Dialog"):
         super(Form, self).__init__(parent)
         self.setWindowTitle(title)
+        self.setWindowIcon(QtGui.QIcon(':/media/icon.png'))
 
     def addField(description = "Write something:", id = "field1"):
 
@@ -457,10 +464,25 @@ class CalibratorUtility(QtWidgets.QMainWindow):
     def __init__(self):
         """Qt window containing camera calibration utility
         """
+
+        
+
         super().__init__()
+
+        calib_input = QtWidgets.QInputDialog.getText(self, "Calibration setting","Calibration chessboard size. w, h",
+                                                     QtWidgets.QLineEdit.Normal, "9,6")[0].split(",")
+        
+        try:
+            w, h = [min(max(int(x), 1),30) for x in calib_input]
+            self.chessboard_size = (w,h)
+
+        except:
+            print("setting to default 9,6 pattern")
+            self.chessboard_size = (9,6)
 
         # Initialize UI
         self.setWindowTitle("Gyroflow Calibrator {}".format(__version__))
+        self.setWindowIcon(QtGui.QIcon(':/media/icon.png'))
 
         self.main_widget = QtWidgets.QWidget()
         self.layout = QtWidgets.QHBoxLayout()
@@ -599,6 +621,7 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         self.export_button = QtWidgets.QPushButton("Export preset file")
         self.export_button.setMinimumHeight(self.button_height)
         self.export_button.clicked.connect(self.save_preset_file)
+        self.export_button.setEnabled(False)
         
         self.right_layout.addWidget(self.export_button, alignment=QtCore.Qt.AlignBottom)
 
@@ -639,7 +662,7 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         self.main_widget.show()
 
         # initialize instance of calibrator class
-        self.calibrator = calibrate_video.FisheyeCalibrator(chessboard_size=(9,6))
+        self.calibrator = calibrate_video.FisheyeCalibrator(chessboard_size=self.chessboard_size)
 
 
     def open_file_func(self):
@@ -652,7 +675,7 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         self.video_viewer.next_frame()
 
         # reset calibrator and info
-        self.calibrator = calibrate_video.FisheyeCalibrator(chessboard_size=(9,6))
+        self.calibrator = calibrate_video.FisheyeCalibrator(chessboard_size=self.chessboard_size)
         self.update_calib_info()
 
     def open_preset_func(self):
@@ -673,8 +696,11 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         """
         print("Showing chessboard")
 
+        board_width = self.chessboard_size[0]
+        board_height = self.chessboard_size[1]
+
         self.chess_window = QtWidgets.QWidget()
-        self.chess_window.setWindowTitle("Calibration target")
+        self.chess_window.setWindowTitle(f"Calibration target ({board_width}x{board_height})")
         self.chess_window.setStyleSheet("background-color:white;")
 
         self.chess_layout = QtWidgets.QVBoxLayout()
@@ -684,7 +710,9 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         
 
         # generate chessboard pattern so no external images are needed
-        chess_pic = np.zeros((9,12), np.uint8)
+
+
+        chess_pic = np.zeros((board_height + 3,board_width + 3), np.uint8)
 
         # Set white squares
         chess_pic[::2,::2] = 255
@@ -697,7 +725,7 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         chess_pic[:,-1]= 255
 
         # double size and reduce borders slightly
-        chess_pic = cv2.resize(chess_pic,(12*2, 9*2), interpolation=cv2.INTER_NEAREST)
+        chess_pic = cv2.resize(chess_pic,((board_width+3)*2, (board_height+3)*2), interpolation=cv2.INTER_NEAREST)
         chess_pic = chess_pic[1:-1,:]
 
         # convert to Qt image
@@ -754,7 +782,7 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         default_file_name = calib_name.replace("@", "At") # 18-55mm@18mm -> 18-55mmAt18mm, eh works I guess
         default_file_name = default_file_name.replace("/", "_").replace(".", "_").replace(" ","_") # f/1.8 -> f_1_8
         default_file_name = "".join([c for c in default_file_name if c.isalpha() or c.isdigit() or c in "_-"]).rstrip()
-        default_file_name.replace("__", "_").replace("__", "_")
+        default_file_name = default_file_name.replace("__", "_").replace("__", "_")
 
         filename = QtWidgets.QFileDialog.getSaveFileName(self, "Export calibration preset", default_file_name,
                                                         filter="JSON preset (*.json)")
@@ -787,6 +815,9 @@ class CalibratorUtility(QtWidgets.QMainWindow):
         print("Adding frame")
 
         ret, self.calib_msg, corners = self.calibrator.add_calib_image(self.video_viewer.thread.frame)
+
+        if ret:
+            self.video_viewer.set_cv_frame(cv2.drawChessboardCorners(self.video_viewer.thread.frame, self.calibrator.chessboard_size,corners,True) )
 
         self.update_calib_info()
 
@@ -821,9 +852,11 @@ class CalibratorUtility(QtWidgets.QMainWindow):
  
         if self.calibrator.num_images_used > 0:
             self.preview_toggle_btn.setEnabled(True)
+            self.export_button.setEnabled(True)
         else:
             self.preview_toggle_btn.setChecked(False)
             self.preview_toggle_btn.setEnabled(False)
+            self.export_button.setEnabled(False)
 
     def calibrate_frames(self):
         self.calibrator.compute_calibration()
@@ -857,6 +890,7 @@ class StretchUtility(QtWidgets.QMainWindow):
 
         # Initialize UI
         self.setWindowTitle("Gyroflow Stretcher {}".format(__version__))
+        self.setWindowIcon(QtGui.QIcon(':/media/icon.png'))
 
         self.main_widget = QtWidgets.QWidget()
         self.layout = QtWidgets.QVBoxLayout()
@@ -1079,6 +1113,7 @@ class StabUtility(QtWidgets.QMainWindow):
 
         # Initialize UI
         self.setWindowTitle("Gyroflow Stabilizer {}".format(__version__))
+        self.setWindowIcon(QtGui.QIcon(':/media/icon.png'))
 
         self.main_widget = QtWidgets.QWidget()
         self.layout = QtWidgets.QVBoxLayout()
@@ -1285,6 +1320,7 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
 
         # Initialize UI
         self.setWindowTitle("Gyroflow Stabilizer Barebone {}".format(__version__))
+        self.setWindowIcon(QtGui.QIcon(':/media/icon.png'))
 
         self.main_widget = QtWidgets.QTabWidget()
         self.layout = QtWidgets.QHBoxLayout()
@@ -1368,7 +1404,7 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
         self.input_controls_layout.addWidget(self.gyro_log_format_select)
 
 
-        self.fpv_tilt_text = QtWidgets.QLabel("FPV camera angle:")
+        self.fpv_tilt_text = QtWidgets.QLabel("Camera to gyro angle:")
         self.fpv_tilt_control = QtWidgets.QDoubleSpinBox(self)
         self.fpv_tilt_control.setMinimum(-90)
         self.fpv_tilt_control.setMaximum(90)
@@ -1649,18 +1685,22 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
         self.export_stoptime.setValue(30)
         self.export_controls_layout.addWidget(self.export_stoptime)
 
-        
-        self.split_screen_select = QtWidgets.QCheckBox("Export split screen")
-        self.split_screen_select.setChecked(False)
-        self.export_controls_layout.addWidget(self.split_screen_select)
 
         self.hw_acceleration_select = QtWidgets.QCheckBox("HW Encoding (experimental)")
         self.hw_acceleration_select.setChecked(False)
         self.export_controls_layout.addWidget(self.hw_acceleration_select)
 
+        self.split_screen_select = QtWidgets.QCheckBox("Export split screen")
+        self.split_screen_select.setChecked(False)
+        self.export_controls_layout.addWidget(self.split_screen_select)
+
         self.display_preview = QtWidgets.QCheckBox("Display preview during rendering")
         self.display_preview.setChecked(True)
         self.export_controls_layout.addWidget(self.display_preview)
+
+        self.export_debug_text = QtWidgets.QCheckBox("Render with debug text")
+        self.export_debug_text.setChecked(False)
+        self.export_controls_layout.addWidget(self.export_debug_text)
 
         self.export_controls_layout.addWidget(QtWidgets.QLabel("Export bitrate [Mbit/s]"))
         self.export_bitrate = QtWidgets.QDoubleSpinBox(self)
@@ -1670,6 +1710,14 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
         self.export_bitrate.setValue(20)
         self.export_controls_layout.addWidget(self.export_bitrate)
 
+        #yuv420p
+        self.export_controls_layout.addWidget(QtWidgets.QLabel("FFmpeg color space selection (Try 'yuv420p' if output doesn't play):"))
+        self.pixfmt_select = QtWidgets.QLineEdit()
+        self.export_controls_layout.addWidget(self.pixfmt_select)
+
+        self.export_controls_layout.addWidget(QtWidgets.QLabel("FFmpeg encoder (untested), overwrites HW setting (<tt>ffmpeg -encoders</tt>):"))
+        self.encoder_select = QtWidgets.QLineEdit()
+        self.export_controls_layout.addWidget(self.encoder_select)
 
         # button for exporting video
         self.export_button = QtWidgets.QPushButton("Export (hopefully) stabilized video")
@@ -1764,10 +1812,11 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
 
         self.video_info_text.setText(info)
 
-        # set default export options
+        # set default sync and export options
         self.out_width_control.setValue(self.video_info_dict["width"])
         self.out_height_control.setValue(self.video_info_dict["height"])
         self.export_stoptime.setValue(int(self.video_info_dict["time"])) # round down
+        self.sync1_control.setValue(5)
         self.sync2_control.setValue(int(self.video_info_dict["time"] - 5)) # 5 seconds before end
 
         self.check_aspect()
@@ -1974,8 +2023,8 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
                 print("Unknown log type selected")
                 return
             
-            self.stab = stabilizer.BBLStabilizer(self.infile_path, self.preset_path, self.gyro_log_path, cam_angle_degrees=uptilt, use_csv=use_csv,
-                                                 gyro_lpf_cutoff = gyro_lpf, logtype=logtype)
+            self.stab = stabilizer.BBLStabilizer(self.infile_path, self.preset_path, self.gyro_log_path, fov_scale=fov_val, cam_angle_degrees=uptilt,
+                                                 use_csv=use_csv, gyro_lpf_cutoff = gyro_lpf, logtype=logtype)
 
 
         self.stab.set_initial_offset(self.offset_control.value())
@@ -2052,10 +2101,14 @@ class StabUtilityBarebone(QtWidgets.QMainWindow):
         bitrate = self.export_bitrate.value()  # Bitrate in Mbit/s 
         preview = self.display_preview.isChecked()
         output_scale = int(self.out_scale_control.value())
+        debug_text = self.export_debug_text.isChecked()
+        vcodec = self.encoder_select.text()
+        pix_fmt = self.pixfmt_select.text()
 
         self.stab.renderfile(start_time, stop_time, filename[0], out_size = out_size,
                              split_screen = split_screen, hw_accel = hardware_acceleration,
-                             bitrate_mbits = bitrate, display_preview=preview, scale=output_scale)
+                             bitrate_mbits = bitrate, display_preview=preview, scale=output_scale,
+                             vcodec=vcodec, pix_fmt = pix_fmt, debug_text=debug_text)
 
         
 
@@ -2077,8 +2130,9 @@ def main():
 
     app = QtWidgets.QApplication([])
 
-    widget = StabUtilityBarebone() # Launcher()
+    widget = Launcher() # Launcher()
     widget.resize(500, 500)
+
 
     widget.show()
 
@@ -2089,5 +2143,6 @@ if __name__ == "__main__":
     # Pack to exe using:
     # pyinstaller gyroflow.py --add-binary <path-to-python>\Python38\Lib\site-packages\cv2\opencv_videoio_ffmpeg430_64.dll
     # in my case:
-    # pyinstaller -F gyroflow.py --add-binary C:\Users\elvin\AppData\Local\Programs\Python\Python38\Lib\site-packages\cv2\opencv_videoio_ffmpeg440_64.dll;.
+    # pyside2-rcc images.qrc -o bundled_images.py
+    # poetry run pyinstaller --icon=media\icon.ico gyroflow.py --add-binary C:\Users\elvin\AppData\Local\Programs\Python\Python38\Lib\site-packages\cv2\opencv_videoio_ffmpeg440_64.dll;.
     # -F == one file, -w == no command window

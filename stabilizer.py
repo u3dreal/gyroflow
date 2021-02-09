@@ -10,7 +10,7 @@ from blackbox_extract import BlackboxExtractor
 from GPMF_gyro import Extractor
 from matplotlib import pyplot as plt
 from vidgear.gears import WriteGear
-
+from _version import __version__
 
 from scipy import signal, interpolate
 
@@ -147,7 +147,7 @@ class Stabilizer:
 
         new_integrator = GyroIntegrator(new_gyro_data,zero_out_time=False, initial_orientation=initial_orientation)
         new_integrator.integrate_all()
-
+        self.last_smooth = smooth
         self.times, self.stab_transform = new_integrator.get_interpolated_stab_transform(smooth=smooth,start=0,interval = 1/self.fps)
 
         #self.times, self.stab_transform = self.integrator.get_interpolated_stab_transform(smooth=smooth,start=-gyro_start,interval = interval)
@@ -212,7 +212,7 @@ class Stabilizer:
 
         new_integrator = GyroIntegrator(new_gyro_data,zero_out_time=False, initial_orientation=initial_orientation)
         new_integrator.integrate_all()
-
+        self.last_smooth = smooth
         self.times, self.stab_transform = new_integrator.get_interpolated_stab_transform(smooth=smooth,start=0,interval = 1/self.fps)
 
         #self.times, self.stab_transform = self.integrator.get_interpolated_stab_transform(smooth=smooth,start=-gyro_start,interval = interval)
@@ -573,11 +573,23 @@ class Stabilizer:
 
 
     def renderfile(self, starttime, stoptime, outpath = "Stabilized.mp4", out_size = (1920,1080),
-                   split_screen = True, hw_accel = False, bitrate_mbits = 20, display_preview = False, scale=1):
+                   split_screen = True, hw_accel = False, bitrate_mbits = 20, display_preview = False, scale=1,
+                   vcodec = "", pix_fmt = "", debug_text = False):
         
         export_out_size = (int(out_size[0]*2*scale) if split_screen else int(out_size[0]*scale), int(out_size[1]*scale))
 
-        if hw_accel:
+        if vcodec:
+            output_params = {
+                "-input_framerate": self.fps, 
+                "-vcodec": vcodec,
+                "-b:v": "%sM" % bitrate_mbits,
+            }
+            if pix_fmt:
+                output_params["-pix_fmt"] = pix_fmt
+
+            out = WriteGear(output_filename=outpath, logging=True, **output_params)
+
+        elif hw_accel:
             if platform.system() == "Darwin":  # macOS
                 output_params = {
                     "-input_framerate": self.fps, 
@@ -604,6 +616,10 @@ class Stabilizer:
                     "-profile": "main", 
                     "-b:v": "%sM" % bitrate_mbits,
                 }
+
+            if pix_fmt:
+                output_params["-pix_fmt"] = pix_fmt
+
             out = WriteGear(output_filename=outpath, **output_params)
 
         else:
@@ -615,6 +631,9 @@ class Stabilizer:
                 "-maxrate": "%sM" % bitrate_mbits,
                 "-bufsize": "%sM" % int(bitrate_mbits * 1.2),
             }
+            if pix_fmt:
+                output_params["-pix_fmt"] = pix_fmt
+
             out = WriteGear(output_filename=outpath, **output_params)
         
 
@@ -684,7 +703,13 @@ class Stabilizer:
                 # Fix border artifacts
 
                 frame_out = frame_out[crop[1]:crop[1]+out_size[1] * scale, crop[0]:crop[0]+out_size[0]* scale]
-                
+
+                # temp debug text
+                if debug_text:
+                    frame_out = cv2.putText(frame_out, "{} | {:0.1f} s ({}) | tau={:.1f}".format(__version__, frame_num/self.fps, frame_num, self.last_smooth),
+                                            (5,30),cv2.FONT_HERSHEY_SIMPLEX,1,(200,200,200),2)
+                #frame_out = cv2.putText(frame_out, "V{} | {:0.1f} s ({}) | tau={:.1f}".format(__version__, frame_num/self.fps, frame_num, self.last_smooth),
+                #                        (5,30),cv2.FONT_HERSHEY_SIMPLEX,1,(60,60,60),2)
                 #out.write(frame_out)
                 #print(frame_out.shape)
 
@@ -704,12 +729,17 @@ class Stabilizer:
 
                     out.write(concatted)
                     if display_preview:
+                        # Resize if preview is huge
+                        if concatted.shape[1] > 1280:
+                            concatted = cv2.resize(concatted, (1280, int(concatted.shape[0] * 1280 / concatted.shape[1])), interpolation=cv2.INTER_LINEAR)
                         cv2.imshow("Before and After", concatted)
                         cv2.waitKey(2)
                 else:
 
                     out.write(frame_out)
                     if display_preview:
+                        if frame_out.shape[1] > 1280:
+                            frame_out = cv2.resize(frame_out, (1280, int(frame_out.shape[0] * 1280 / frame_out.shape[1])), interpolation=cv2.INTER_LINEAR)
                         cv2.imshow("Stabilized?", frame_out)
                         cv2.waitKey(2)
 
@@ -939,6 +969,9 @@ class BBLStabilizer(Stabilizer):
 
         # Get gyro data
         print(bblpath)
+
+        # quick fix
+        cam_angle_degrees = -cam_angle_degrees
 
         if use_csv:
             with open(bblpath) as bblcsv:
